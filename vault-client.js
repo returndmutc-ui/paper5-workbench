@@ -2,6 +2,7 @@ const base = new URL('./', import.meta.url).pathname;
 const storageKey = `paper5-vault:${base}`;
 const status = document.getElementById('status');
 const button = document.getElementById('submit');
+document.getElementById('unlock').addEventListener('submit', event => event.preventDefault());
 const say = text => { status.textContent = text; };
 function call(worker, message) {
   return new Promise((resolve, reject) => {
@@ -41,6 +42,7 @@ async function boot() {
       await unlock(raw);
     } catch (error) { say(error.message); button.disabled = false; }
   });
+  button.textContent = '解锁工作台'; button.disabled = false;
   const saved = sessionStorage.getItem(storageKey);
   if (saved) {
     button.disabled = true;
