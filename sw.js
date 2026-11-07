@@ -3,6 +3,7 @@ const BASE = new URL('./', self.location.href).pathname;
 const CACHE = 'paper5-ciphertext-v1';
 let key = null, manifest = null, loading = null, requesting = null;
 let catalogHash = null, updateHash = null, checkedAt = 0, refreshing = null;
+let keyGeneration = null;
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 const mime = {'html':'text/html; charset=utf-8','js':'text/javascript; charset=utf-8','css':'text/css; charset=utf-8','json':'application/json; charset=utf-8','md':'text/plain; charset=utf-8','py':'text/plain; charset=utf-8'};
 self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
@@ -54,12 +55,18 @@ async function initialize(rawKey) {
     Object.assign(catalog.entries,update.entries);
   }
   key = candidate; manifest = catalog;
+  keyGeneration = `${config.salt}:${config.iterations}`;
   catalogHash = config.catalog; updateHash = config.update; checkedAt = Date.now();
 }
 async function refreshCatalog() {
   if (!key || Date.now()-checkedAt < 60000) return;
   if (!refreshing) refreshing = (async()=>{
     const config = await fetch(`${BASE}vault.json?minute=${Math.floor(Date.now()/60000)}`, {cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Catalog unavailable');return r.json();});
+    if (`${config.salt}:${config.iterations}` !== keyGeneration) {
+      key = null; manifest = null; keyGeneration = null;
+      for (const client of await self.clients.matchAll({includeUncontrolled:true})) if(client.url.startsWith(self.location.origin+BASE)) client.postMessage({type:'locked'});
+      return;
+    }
     if(config.catalog !== catalogHash) {
       const next = JSON.parse(new TextDecoder().decode(await decrypt(await cipher(config.catalog),key)));
       if(next.schema !== 'paper5.encrypted-workbench.v1' || !next.entries['index.html'])throw Error('Invalid updated catalog');
@@ -119,6 +126,10 @@ async function serve(request) {
     return new Response('Workbench locked', {status:401,headers:{'Cache-Control':'no-store'}});
   }
   await refreshCatalog();
+  if (!key || !manifest) {
+    if (request.mode === 'navigate') return fetch(`${BASE}index.html`, {cache:'no-store'});
+    return new Response('Workbench locked', {status:401,headers:{'Cache-Control':'no-store'}});
+  }
   if (!name || name.endsWith('/')) name += 'index.html';
   for (const [alias,target] of Object.entries(manifest.aliases)) if(name === alias || name.startsWith(alias+'/')) name = target+name.slice(alias.length);
   if (!manifest.entries[name] && manifest.redirects?.[name]) return Response.redirect(self.location.origin+BASE+manifest.redirects[name]+url.search,302);
