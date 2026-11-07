@@ -17,9 +17,27 @@ async function cipher(hash) {
   const cache = await caches.open(CACHE);
   const cached = await cache.match(url);
   if (cached) return cached.arrayBuffer();
-  const response = await fetch(url, {cache:'no-store'});
-  if (!response.ok) throw new Error('Encrypted resource missing');
-  const data = await response.arrayBuffer();
+  const location = manifest?.packed?.[hash];
+  let data;
+  if(location) {
+    const packUrl=`${BASE}data/${location.pack}.pack`;
+    const savedPack=await cache.match(packUrl);
+    if(savedPack)data=(await savedPack.arrayBuffer()).slice(location.offset,location.offset+location.length);
+    else {
+      const response=await fetch(packUrl,{cache:'no-store',headers:{Range:`bytes=${location.offset}-${location.offset+location.length-1}`}});
+      if(!response.ok)throw Error('Encrypted pack missing');
+      const payload=await response.arrayBuffer();
+      if(response.status===206){if(payload.byteLength!==location.length)throw Error('Invalid packed byte range');data=payload;}
+      else {
+        if(payload.byteLength<location.offset+location.length)throw Error('Truncated encrypted pack');
+        await cache.put(packUrl,new Response(payload));data=payload.slice(location.offset,location.offset+location.length);
+      }
+    }
+  } else {
+    const response = await fetch(url, {cache:'no-store'});
+    if (!response.ok) throw new Error('Encrypted resource missing');
+    data = await response.arrayBuffer();
+  }
   const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].map(x=>x.toString(16).padStart(2,'0')).join('');
   if (digest !== hash) throw Error('Ciphertext digest mismatch');
   await cache.put(url, new Response(data, {headers:{'Content-Type':'application/octet-stream'}}));
